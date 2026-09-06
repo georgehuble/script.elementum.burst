@@ -344,78 +344,123 @@ class Client:
 
         # log.debug("Cookies for %s: %s" % (repr(url), repr(self._cookies)))
 
+        method = 'POST' if post_data else 'GET'
+
         # Default headers for any request. Pretend like we are the usual browser.
-        req_headers = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7,uk;q=0.6,pl;q=0.5',
-            'Cache-Control': 'max-age=0',
-            'Content-Language': language,
-            'Origin': url,
-            'Referer': url,
-            'User-Agent': self.user_agent
-        }
+        # Headers are rebuilt for each attempt so a User-Agent obtained from a
+        # Cloudflare solve is picked up on the retry.
+        def build_headers():
+            req_headers = {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7,uk;q=0.6,pl;q=0.5',
+                'Cache-Control': 'max-age=0',
+                'Content-Language': language,
+                'Origin': url,
+                'Referer': url,
+                'User-Agent': self.user_agent
+            }
 
-        # Remove referer for API providers
-        if self.is_api:
-            del req_headers['Referer']
+            # Remove referer for API providers
+            if self.is_api:
+                del req_headers['Referer']
 
-        # If headers passed to open() call - we overwrite headers.
-        if headers:
-            for key, value in iteritems(headers):
-                if key == ':path':
-                    u = urlparse(url)
-                    value = u.path
-                if value:
-                    req_headers[key] = value
-                elif key.capitalize() in req_headers:
-                    del req_headers[key.capitalize()]
+            # If headers passed to open() call - we overwrite headers.
+            if headers:
+                for key, value in iteritems(headers):
+                    if key == ':path':
+                        u = urlparse(url)
+                        value = u.path
+                    if value:
+                        req_headers[key] = value
+                    elif key.capitalize() in req_headers:
+                        del req_headers[key.capitalize()]
 
-        if self.token:
-            req_headers["Authorization"] = self.token
+            if self.token:
+                req_headers["Authorization"] = self.token
 
-        req = None
-        if post_data:
-            req = requests.Request('POST', url, data=post_data, headers=req_headers)
-        else:
-            req = requests.Request('GET', url, headers=req_headers)
+            return req_headers
 
-        prepped = self.session.prepare_request(req)
-        self.request_headers = prepped.headers
+        # Original request + a single Cloudflare challenge retry
+        for attempt in range(2):
+            req_headers = build_headers()
 
-        try:
-            self._good_spider()
-            with self.session.send(prepped) as response:
-                self.headers = response.headers
-                self.status = response.status_code
-                self.url = response.url
+            req = None
+            if post_data:
+                req = requests.Request('POST', url, data=post_data, headers=req_headers)
+            else:
+                req = requests.Request('GET', url, headers=req_headers)
 
-                if self.response_charset:
-                    self.content = response.content.decode(self.response_charset, 'ignore')
-                else:
-                    self.content = response.text
-                self.request_cookies = response.request.headers.get('Cookie')
-                self.response_cookies = response.cookies.get_dict()
+            prepped = self.session.prepare_request(req)
+            self.request_headers = prepped.headers
 
-        except requests.exceptions.InvalidSchema as e:
-            # If link points to a magnet: then it can be used as a content
-            matches = re.findall('No connection adapters were found for \'(.*?)\'', str(e))
-            if matches:
-                self.content = matches[0]
-                return True
+            try:
+                self._good_spider()
+                with self.session.send(prepped) as response:
+                    self.headers = response.headers
+                    self.status = response.status_code
+                    self.url = response.url
 
-            import traceback
-            log.error("%s failed with %s:" % (repr(url), repr(e)))
-            map(log.debug, traceback.format_exc().split("\n"))
-        except Exception as e:
-            import traceback
-            log.error("%s failed with %s:" % (repr(url), repr(e)))
-            map(log.debug, traceback.format_exc().split("\n"))
+                    if self.response_charset:
+                        self.content = response.content.decode(self.response_charset, 'ignore')
+                    else:
+                        self.content = response.text
+                    self.request_cookies = response.request.headers.get('Cookie')
+                    self.response_cookies = response.cookies.get_dict()
 
-        log.debug("Status for %s : %s" % (repr(url), str(self.status)))
-        if self.status != 200:
-            log.debug("Failed response content for %s : %s" % (repr(url), str(self.content)))
+            except requests.exceptions.InvalidSchema as e:
+                # If link points to a magnet: then it can be used as a content
+                matches = re.findall('No connection adapters were found for \'(.*?)\'', str(e))
+                if matches:
+                    self.content = matches[0]
+                    return True
+
+                import traceback
+                log.error("%s failed with %s:" % (repr(url), repr(e)))
+                map(log.debug, traceback.format_exc().split("\n"))
+                return self.status == 200
+            except Exception as e:
+                import traceback
+                log.error("%s failed with %s:" % (repr(url), repr(e)))
+                map(log.debug, traceback.format_exc().split("\n"))
+                return self.status == 200
+
+            log.debug("Status for %s : %s" % (repr(url), str(self.status)))
+            if self.status != 200:
+                log.debug("Failed response content for %s : %s" % (repr(url), str(self.content)))
+
+            # Cloudflare bypass: on a challenge, solve it once and retry the request.
+            if attempt == 0 and self._solve_challenge(url, method, post_data, headers):
+                self._read_cookies(url)
+                self.session.cookies = self._cookies
+                continue
+
+            return self.status == 200
 
         return self.status == 200
+
+    def _solve_challenge(self, url, method='GET', post_data=None, headers=None):
+        """ Detect and solve a Cloudflare challenge with the FlareSolverr service.
+
+        Only runs when the Cloudflare bypass is enabled. Solver failures are
+        caught and logged without raising, leaving the original (challenge)
+        response intact so the caller never sees a retry loop.
+
+        Returns:
+            bool: ``True`` when a solution was applied and the request should be
+            retried, ``False`` otherwise.
+        """
+        from .flaresolverr import flaresolverr_enabled, flaresolverr_url, is_challenge, solve, apply_solution
+
+        if not flaresolverr_enabled or not flaresolverr_url:
+            return False
+        if not is_challenge(self.status, self.content):
+            return False
+
+        log.debug("Cloudflare challenge detected for %s (status %s), solving via FlareSolverr..." % (repr(url), str(self.status)))
+        solution = solve(flaresolverr_url, url, method=method, post_data=post_data, headers=headers)
+        if not solution:
+            return False
+        return apply_solution(self, solution)
 
     def login(self, root_url, url, data, headers, fails_with, prerequest=None):
         """ Login wrapper around ``open``

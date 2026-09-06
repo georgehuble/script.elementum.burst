@@ -497,3 +497,15 @@ msgstr "URL файла PAC Antizapret"
 msgctxt "#32171"
 msgid "Use OpenNIC DNS servers"
 msgstr "Использовать OpenNIC DNS сервера"
+
+msgctxt "#32172"
+msgid "Cloudflare bypass"
+msgstr ""
+
+msgctxt "#32173"
+msgid "Enable Cloudflare bypass (FlareSolverr)"
+msgstr ""
+
+msgctxt "#32174"
+msgid "FlareSolverr service URL"
+msgstr ""

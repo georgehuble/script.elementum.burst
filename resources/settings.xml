@@ -43,6 +43,12 @@
     <setting label="32157" id="cookie_sync_fileurl" type="text" enable="eq(-5,true)" default="" />
   </category>
 
+  <!-- Cloudflare bypass -->
+  <category label="32172">
+    <setting label="32173" id="flaresolverr_enabled" type="bool" default="false" />
+    <setting label="32174" id="flaresolverr_url" type="text" default="http://localhost:8191" enable="eq(-1,true)" />
+  </category>
+
   <!-- Providers -->
   <category label="32128">
     <!-- Providers-Public-1-Begin -->

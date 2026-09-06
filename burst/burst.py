@@ -41,7 +41,7 @@ except:
 from .provider import process
 from .providers.definitions import definitions, longest
 from .filtering import apply_filters, Filtering, cleanup_results
-from .client import USER_AGENT, Client, change_agent
+from .client import Client, change_agent
 from .utils import ADDON_ICON, notify, translation, sizeof, get_icon_path, get_enabled_providers, get_alias, size_int
 
 provider_names = []
@@ -401,7 +401,9 @@ def extract_torrents(provider, client):
 
             # Pass client cookies with torrent if private
             if not torrent.startswith('magnet'):
-                user_agent = USER_AGENT
+                # Use the client's User-Agent so it always matches the cookies in
+                # its jar (e.g. a Cloudflare-solved cf_clearance bound to that UA).
+                user_agent = client.user_agent
 
                 if not torrent.startswith('http'):
                     torrent = definition['root_url'] + py2_encode(torrent)
@@ -566,7 +568,7 @@ def extract_from_api(provider, client):
             if 'download_path' in definition:
                 torrent = definition['download_path'] + torrent
             if client.token:
-                user_agent = USER_AGENT
+                user_agent = client.user_agent
                 headers = {'Authorization': client.token, 'User-Agent': user_agent}
                 log.debug("[%s] Appending headers: %s" % (provider, repr(headers)))
                 torrent = append_headers(torrent, headers)

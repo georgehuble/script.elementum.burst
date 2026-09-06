@@ -98,6 +98,45 @@ and make sure it follows the format below (hopefully with `"subpage": false`):
 }
 ```
 
+### Cloudflare bypass (FlareSolverr)
+
+Some providers (e.g. RuTracker) are protected by a Cloudflare JavaScript challenge
+("Just a moment...", HTTP 403) that a plain HTTP client cannot pass. Burst can
+delegate solving to a local [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr)
+service and reuse the returned cookies + browser User-Agent with its regular HTTP
+client, so login, search and `.torrent` downloads keep working.
+
+**Requires** a running FlareSolverr instance on the same host as Kodi (port `8191`):
+
+```
+docker run -d --name flaresolverr -p 8191:8191 --restart unless-stopped ghcr.io/flaresolverr/flaresolverr:latest
+```
+
+Then enable the bypass in the addon settings:
+
+- *Cloudflare bypass → Enable Cloudflare bypass (FlareSolverr)* — **off by default**.
+- *Cloudflare bypass → FlareSolverr service URL* — defaults to `http://localhost:8191`.
+
+The bypass is opt-in and never runs when disabled. When enabled, protected
+providers (currently RuTracker) are pre-solved before the login flow so a valid
+`cf_clearance` cookie and the matching User-Agent are stored in the cookie jar;
+any challenge detected on a later request is solved once and the request is
+retried automatically. If FlareSolverr is unreachable, times out or cannot solve
+a challenge, Burst logs the failure and behaves exactly as if the bypass were
+disabled (no crash, no retry loop).
+
+**Note on RuTracker login and CAPTCHAs.** FlareSolverr only solves the
+Cloudflare "Just a moment..." challenge. After repeated failed logins (or from a
+flagged IP) RuTracker may additionally ask for an **image CAPTCHA** on the login
+form, which Burst cannot solve automatically. This only affects the *password
+login* step. Once a login succeeds, Burst persists the session (`bb_session`
+cookie) in its cookie jar and reuses it on later searches, so no re-login (and no
+CAPTCHA) is needed until that session expires. To avoid the CAPTCHA entirely and
+make logins survive cookie expiry, use the addon's **Cookie sync** feature: log
+in once in a normal browser, export the cookies (`bb_session`, `cf_clearance`)
+together with the User-Agent, and let Burst restore them. Do not press
+*Maintenance → Remove cookies* unless you intend to log in again.
+
 ### Release
 
 Release is done by running `release.sh` script, that collects zip artifacts and push it as a release (if we are on the tag).

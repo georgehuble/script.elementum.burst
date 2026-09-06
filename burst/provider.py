@@ -12,6 +12,7 @@ import json
 import time
 from .client import Client
 from elementum.provider import log, get_setting, set_setting
+from .flaresolverr import flaresolverr_enabled, pre_solve
 from .filtering import cleanup_results
 from .providers.definitions import definitions, longest
 from .utils import ADDON_PATH, get_int, clean_size, get_alias, with_defaults, notify, translation, get_icon_path
@@ -257,6 +258,18 @@ def process(provider, generator, filtering, has_special, verify_name=True, verif
                         login_headers = eval(definition['login_headers'])
                 except Exception as e:
                     log.error("Could not make login headers for %s: %s" % (provider, e))
+
+                # Cloudflare-protected providers: pre-solve the login page to warm
+                # cookies + User-Agent before any CSRF/login request is sent. Skip
+                # when a valid session (login_cookie) is already persisted, so we
+                # do not spin a browser solve on every search.
+                if not logged_in and definition.get('cf_protected') and flaresolverr_enabled:
+                    has_session = False
+                    if 'login_cookie' in definition and definition['login_cookie']:
+                        client._read_cookies()
+                        has_session = client.cookie_exists(definition['login_cookie'], urlparse(definition['root_url']).netloc)
+                    if not has_session:
+                        pre_solve(client, definition['root_url'] + definition['login_path'])
 
                 # TODO generic flags in definitions for those...
                 if 'csrf_token' in definition and definition['csrf_token']:
